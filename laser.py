@@ -35,17 +35,17 @@ class Laser:
         self.phase[-n_update-1:-1] = np.cumsum(phase_steps) + self.phase[-n_update-2]
      
     def interference_signal(self,delay):
-        return np.real(np.exp(1j * (self.phase - np.roll(self.phase, np.int(delay / self.dt)))))
+        return np.real(np.exp(1j * (self.phase - np.roll(self.phase, -np.int(delay / self.dt)))))
         
         
         
         
 fs = 125e6
-n = 16384
-D_phi = 100000
+n = 1024
+D_phi = 1000
 
 # Interferometer delay (s)
-delay = 0.1e-6  
+delay = 10e-6  
 
 las = Laser(fs, n, D_phi)        
 
@@ -53,7 +53,7 @@ fig = plt.figure()
 ax1 = fig.add_subplot(311)
 ax2 = fig.add_subplot(312)
 ax3 = fig.add_subplot(313)
-line1, = ax1.plot(np.fft.fftshift(las.fft_freq),np.linspace(-50,100,las.n))
+line1, = ax1.plot(np.fft.fftshift(las.fft_freq),np.linspace(-150,50,las.n))
 line2, = ax2.plot(las.t,np.linspace(0.9,1.1,las.n))
 line3, = ax3.plot(las.t,np.linspace(-10.1,10.1,las.n))
 
