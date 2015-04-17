@@ -27,6 +27,8 @@ class Laser:
         
         self.phase = np.zeros(self.n_max) + 2* np.pi * np.random.rand()
         self.update_phase(self.n)
+        
+        self.interferometer_phase = np.pi/4
 
         
     def update_phase(self, n_update):
@@ -35,36 +37,44 @@ class Laser:
         self.phase[-n_update-1:-1] = np.cumsum(phase_steps) + self.phase[-n_update-2]
      
     def interference_signal(self,delay):
-        return np.real(np.exp(1j * (self.phase - np.roll(self.phase, -np.int(delay / self.dt)))))
+        signal = np.real(np.exp(1j * self.interferometer_phase) * \
+                 np.exp(1j * (self.phase - np.roll(self.phase, np.int(delay / self.dt))))) 
+        return signal
         
-        
-        
-        
-fs = 125e6
+fs = 250e6
 n = 1024
-D_phi = 1000
+linewidth = 100e3; 
+D_phi = 2*np.pi*linewidth
 
 # Interferometer delay (s)
-delay = 10e-6  
+delay = 0.1e-6  
 
 las = Laser(fs, n, D_phi)        
 
-fig = plt.figure()
+# Plot settings
+fig = plt.figure(figsize=(16,12))
 ax1 = fig.add_subplot(311)
 ax2 = fig.add_subplot(312)
 ax3 = fig.add_subplot(313)
-line1, = ax1.plot(np.fft.fftshift(las.fft_freq),np.linspace(-150,50,las.n))
-line2, = ax2.plot(las.t,np.linspace(0.9,1.1,las.n))
+line1, = ax1.plot(np.fft.fftshift(las.fft_freq),np.linspace(-50,50,las.n))
+line11, = ax1.plot(np.fft.fftshift(las.fft_freq),np.linspace(-50,50,las.n))
+line2, = ax2.plot(las.t,np.linspace(-1.1,1.1,las.n))
 line3, = ax3.plot(las.t,np.linspace(-10.1,10.1,las.n))
+line31, = ax3.plot(las.t,np.linspace(-10.1,10.1,las.n))
 
+psd_avg = np.zeros(las.n)
 
-
-for i in range(100):
+for i in range(1000):
     las.update_phase(128)
     signal = las.interference_signal(delay)
-    line1.set_ydata(np.fft.fftshift(10*np.log10(np.square(np.fft.fft(signal[-las.n-1:-1])))))
+    psd = np.abs(np.square(np.fft.fft(signal[-las.n-1:-1])));
+    psd_avg = (i * psd_avg + psd)/(i+1) 
+    line1.set_ydata(np.fft.fftshift(10*np.log10(psd)))
+    line11.set_ydata(np.fft.fftshift(10*np.log10(psd_avg)))
     line2.set_ydata(signal[-las.n-1:-1])   
     line3.set_ydata(las.phase[-las.n-1:-1])
+    tmp = np.roll(las.phase, np.int(delay / las.dt))
+    line31.set_ydata(tmp[-las.n-1:-1])
     fig.canvas.draw()
     time.sleep(0.01)
              
