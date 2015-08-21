@@ -20,15 +20,18 @@ class Laser:
 
         self.D_phi = D_phi   
         
-        self.n_max = 2 * self.n
+        self.n_ = 2 * self.n
         
         # Time grid (s)
-        self.t = np.arange(n)/fs
+        self.t  = np.arange(self.n)/fs
+        self.t_ = np.arange(self.n_)/fs
         # Time steps (s)
         self.dt = 1/fs
-        self.fft_freq = np.fft.fftfreq(n)/self.dt
+        # Frequency grid (Hz)
+        self.f_fft = np.fft.fftfreq(self.n)/self.dt        
+        self.f_fft_ = np.fft.fftfreq(self.n_)/self.dt
         
-        self.phase = np.zeros(self.n_max) + 2* np.pi * np.random.rand()
+        self.phase = np.zeros(self.n_) + 2* np.pi * np.random.rand()
         self.update_phase(self.n)
         
         self.interferometer_phase = np.pi/4
@@ -38,10 +41,23 @@ class Laser:
         self.phase = np.roll(self.phase, -n_update)
         self.phase[-n_update-1:-1] = np.cumsum(phase_steps) + self.phase[-n_update-2]
      
-    def interference_signal(self,delay):
+    def interference_signal(self, delay):
         signal = 0.5*(1 + np.real(np.exp(1j * self.interferometer_phase) * \
-                 np.exp(1j * (self.phase - np.roll(self.phase, np.int(delay / self.dt))))))
+                 np.exp(1j * (self.phase - self.shift_phase(delay, correct_slope=True)))))
         return signal
+        
+    def shift_phase(self, delay, correct_slope=False):
+        phase = self.phase
+        wedge = np.exp(2*1j*np.pi*delay*self.f_fft_)
+        if correct_slope:
+            data_inter = phase[-1] + (phase[1]-phase[0]+phase[-1]-phase[-2])/2
+            slope = (data_inter - phase[0]) / (self.n_ * self.dt)
+            phase = phase - slope * self.t_
+        fft_phase = np.fft.fft(phase)
+        phase_shifted = np.real(np.fft.ifft(fft_phase * wedge))
+        if correct_slope:
+            phase_shifted += slope * self.t_
+        return phase_shifted
         
 
 class KoheronWindow(QtGui.QMainWindow):
@@ -70,8 +86,7 @@ class KoheronWindow(QtGui.QMainWindow):
         self.hlay1 = QtGui.QHBoxLayout()   
 
         self.value_layout = QtGui.QVBoxLayout()         
-        self.slider_layout = QtGui.QVBoxLayout()  
-                
+        self.slider_layout = QtGui.QVBoxLayout()                
         
         self.centralWid.setLayout(self.lay)
                 
@@ -96,7 +111,7 @@ class KoheronWindow(QtGui.QMainWindow):
         
         # Plot Widget   
         self.plotWid = pg.PlotWidget(name="data")
-        self.dataItem = pg.PlotDataItem(1e-6 * np.fft.fftshift(self.laser.fft_freq),0*self.laser.t, pen=(0,4))
+        self.dataItem = pg.PlotDataItem(1e-6 * np.fft.fftshift(self.laser.f_fft),0*self.laser.t, pen=(0,4))
         self.plotWid.addItem(self.dataItem)
         self.plotItem = self.plotWid.getPlotItem()
         self.plotItem.setMouseEnabled(x=False, y = True)
@@ -104,12 +119,8 @@ class KoheronWindow(QtGui.QMainWindow):
         # Axis
         self.plotAxis = self.plotItem.getAxis("bottom")
         self.plotAxis.setLabel("Frequency (MHz)")
-
         
         # Add Widgets to layout
-        
-        
-
         
         self.value_layout.addWidget(self.dphi_label,0)        
         self.slider_layout.addWidget(self.dphi_slider,0)
@@ -131,12 +142,11 @@ class KoheronWindow(QtGui.QMainWindow):
         
         # Define events
         
-    #@profile
     def update(self):        
         self.laser.update_phase(16)
         signal = self.laser.interference_signal(self.delay)
         psd = np.abs(np.square(np.fft.fft(signal[-self.laser.n-1:-1])));
-        self.dataItem.setData(1e-6 * np.fft.fftshift(self.laser.fft_freq),np.fft.fftshift(10*np.log10(psd)))
+        self.dataItem.setData(1e-6 * np.fft.fftshift(self.laser.f_fft),np.fft.fftshift(10*np.log10(psd)))
     
   
     def change_dphi(self):
