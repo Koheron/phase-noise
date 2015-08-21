@@ -2,9 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-import matplotlib.pyplot as plt
-import time
-
 from pyqtgraph.Qt import QtGui, QtCore
 import pyqtgraph as pg
 
