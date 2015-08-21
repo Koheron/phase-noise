@@ -181,35 +181,6 @@ def main():
     while True:         
         khw.update()
         QtGui.QApplication.processEvents()
-    
-    
-    
-    # Plot settings
-    fig = plt.figure(figsize=(16,12))
-    ax1 = fig.add_subplot(311)
-    ax2 = fig.add_subplot(312)
-    ax3 = fig.add_subplot(313)
-    line1, = ax1.plot(np.fft.fftshift(las.fft_freq),np.linspace(-50,50,las.n))
-    line11, = ax1.plot(np.fft.fftshift(las.fft_freq),np.linspace(-50,50,las.n))
-    line2, = ax2.plot(las.t,np.linspace(0,1,las.n))
-    line3, = ax3.plot(las.t,np.linspace(-10.1,10.1,las.n))
-    line31, = ax3.plot(las.t,np.linspace(-10.1,10.1,las.n))
-    
-    psd_avg = np.zeros(las.n)
-    
-    for i in range(1):
-        las.update_phase(16)
-        signal = las.interference_signal(delay)
-        psd = np.abs(np.square(np.fft.fft(signal[-las.n-1:-1])));
-        psd_avg = (i * psd_avg + psd)/(i+1) 
-        line1.set_ydata(np.fft.fftshift(10*np.log10(psd)))
-        line11.set_ydata(np.fft.fftshift(10*np.log10(psd_avg)))
-        line2.set_ydata(signal[-las.n-1:-1])   
-        line3.set_ydata(las.phase[-las.n-1:-1])
-        tmp = np.roll(las.phase, np.int(delay / las.dt))
-        line31.set_ydata(tmp[-las.n-1:-1])
-        fig.canvas.draw()
-        time.sleep(0.01)
 
 if __name__ == '__main__':
     import sys    
