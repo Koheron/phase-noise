@@ -60,9 +60,9 @@ class Laser:
         return phase_shifted
         
 
-class KoheronWindow(QtGui.QMainWindow):
+class Window(QtGui.QMainWindow):
     def __init__(self, app, laser):
-        super(KoheronWindow, self).__init__()
+        super(Window, self).__init__()
         self.app = app        
         self.laser = laser
         
@@ -70,8 +70,8 @@ class KoheronWindow(QtGui.QMainWindow):
         self.dphi_step = 10e3
         
         self.delay = 0.1e-6
-        self.max_delay = 1e-6
-        self.delay_step = 0.001e-6
+        self.max_delay = 0.1e-6
+        self.delay_step = 0.1e-9
                 
         self.setWindowTitle("Koheron Simulation of laser phase noise") # Title
         self.setWindowIcon(QtGui.QIcon('icon_koheron.png'))
@@ -155,20 +155,15 @@ class KoheronWindow(QtGui.QMainWindow):
         
     def change_delay(self):
         self.delay = self.delay_slider.value()*self.delay_step 
-        self.delay_label.setText('Delay (ns) : '+"{:.2f}".format(1e9 * self.delay))
-        
-     
+        self.delay_label.setText('Delay (ns) : '+"{:.2f}".format(1e9 * self.delay))    
         
         
 def main():        
-    fs = 250e6
+    fs = 125e6
     n = 1024
-    linewidth = 100e3; 
-    D_phi = 2*np.pi*linewidth
-    
-    # Interferometer delay (s)
-    delay = 0.1e-6  
-    
+    linewidth = 100e3; # Laser linewidth (Hz)
+    D_phi = 2*np.pi*linewidth    
+   
     las = Laser(fs, n, D_phi)        
     
     app = QtGui.QApplication.instance()
@@ -176,10 +171,10 @@ def main():
         app = QtGui.QApplication([])
     app.quitOnLastWindowClosed()    
     
-    khw = KoheronWindow(app, las)    
+    win = Window(app, las)    
     
     while True:         
-        khw.update()
+        win.update()
         QtGui.QApplication.processEvents()
 
 if __name__ == '__main__':
