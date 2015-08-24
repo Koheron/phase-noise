@@ -2,9 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-import matplotlib.pyplot as plt
-import time
-
 from pyqtgraph.Qt import QtGui, QtCore
 import pyqtgraph as pg
 
@@ -20,15 +17,18 @@ class Laser:
 
         self.D_phi = D_phi   
         
-        self.n_max = 2 * self.n
+        self.n_ = 2 * self.n
         
         # Time grid (s)
-        self.t = np.arange(n)/fs
+        self.t  = np.arange(self.n)/fs
+        self.t_ = np.arange(self.n_)/fs
         # Time steps (s)
         self.dt = 1/fs
-        self.fft_freq = np.fft.fftfreq(n)/self.dt
+        # Frequency grid (Hz)
+        self.f_fft = np.fft.fftfreq(self.n)/self.dt        
+        self.f_fft_ = np.fft.fftfreq(self.n_)/self.dt
         
-        self.phase = np.zeros(self.n_max) + 2* np.pi * np.random.rand()
+        self.phase = np.zeros(self.n_) + 2* np.pi * np.random.rand()
         self.update_phase(self.n)
         
         self.interferometer_phase = np.pi/4
@@ -38,15 +38,28 @@ class Laser:
         self.phase = np.roll(self.phase, -n_update)
         self.phase[-n_update-1:-1] = np.cumsum(phase_steps) + self.phase[-n_update-2]
      
-    def interference_signal(self,delay):
+    def interference_signal(self, delay):
         signal = 0.5*(1 + np.real(np.exp(1j * self.interferometer_phase) * \
-                 np.exp(1j * (self.phase - np.roll(self.phase, np.int(delay / self.dt))))))
+                 np.exp(1j * (self.phase - self.shift_phase(delay, correct_slope=True)))))
         return signal
         
+    def shift_phase(self, delay, correct_slope=False):
+        phase = self.phase
+        wedge = np.exp(2*1j*np.pi*delay*self.f_fft_)
+        if correct_slope:
+            data_inter = phase[-1] + (phase[1]-phase[0]+phase[-1]-phase[-2])/2
+            slope = (data_inter - phase[0]) / (self.n_ * self.dt)
+            phase = phase - slope * self.t_
+        fft_phase = np.fft.fft(phase)
+        phase_shifted = np.real(np.fft.ifft(fft_phase * wedge))
+        if correct_slope:
+            phase_shifted += slope * self.t_
+        return phase_shifted
+        
 
-class KoheronWindow(QtGui.QMainWindow):
+class Window(QtGui.QMainWindow):
     def __init__(self, app, laser):
-        super(KoheronWindow, self).__init__()
+        super(Window, self).__init__()
         self.app = app        
         self.laser = laser
         
@@ -54,8 +67,8 @@ class KoheronWindow(QtGui.QMainWindow):
         self.dphi_step = 10e3
         
         self.delay = 0.1e-6
-        self.max_delay = 1e-6
-        self.delay_step = 0.001e-6
+        self.max_delay = 0.1e-6
+        self.delay_step = 0.1e-9
                 
         self.setWindowTitle("Koheron Simulation of laser phase noise") # Title
         self.setWindowIcon(QtGui.QIcon('icon_koheron.png'))
@@ -70,8 +83,7 @@ class KoheronWindow(QtGui.QMainWindow):
         self.hlay1 = QtGui.QHBoxLayout()   
 
         self.value_layout = QtGui.QVBoxLayout()         
-        self.slider_layout = QtGui.QVBoxLayout()  
-                
+        self.slider_layout = QtGui.QVBoxLayout()                
         
         self.centralWid.setLayout(self.lay)
                 
@@ -96,7 +108,7 @@ class KoheronWindow(QtGui.QMainWindow):
         
         # Plot Widget   
         self.plotWid = pg.PlotWidget(name="data")
-        self.dataItem = pg.PlotDataItem(1e-6 * np.fft.fftshift(self.laser.fft_freq),0*self.laser.t, pen=(0,4))
+        self.dataItem = pg.PlotDataItem(1e-6 * np.fft.fftshift(self.laser.f_fft),0*self.laser.t, pen=(0,4))
         self.plotWid.addItem(self.dataItem)
         self.plotItem = self.plotWid.getPlotItem()
         self.plotItem.setMouseEnabled(x=False, y = True)
@@ -104,12 +116,8 @@ class KoheronWindow(QtGui.QMainWindow):
         # Axis
         self.plotAxis = self.plotItem.getAxis("bottom")
         self.plotAxis.setLabel("Frequency (MHz)")
-
         
         # Add Widgets to layout
-        
-        
-
         
         self.value_layout.addWidget(self.dphi_label,0)        
         self.slider_layout.addWidget(self.dphi_slider,0)
@@ -131,12 +139,11 @@ class KoheronWindow(QtGui.QMainWindow):
         
         # Define events
         
-    #@profile
     def update(self):        
         self.laser.update_phase(16)
         signal = self.laser.interference_signal(self.delay)
         psd = np.abs(np.square(np.fft.fft(signal[-self.laser.n-1:-1])));
-        self.dataItem.setData(1e-6 * np.fft.fftshift(self.laser.fft_freq),np.fft.fftshift(10*np.log10(psd)))
+        self.dataItem.setData(1e-6 * np.fft.fftshift(self.laser.f_fft),np.fft.fftshift(10*np.log10(psd)))
     
   
     def change_dphi(self):
@@ -145,20 +152,15 @@ class KoheronWindow(QtGui.QMainWindow):
         
     def change_delay(self):
         self.delay = self.delay_slider.value()*self.delay_step 
-        self.delay_label.setText('Delay (ns) : '+"{:.2f}".format(1e9 * self.delay))
-        
-     
+        self.delay_label.setText('Delay (ns) : '+"{:.2f}".format(1e9 * self.delay))    
         
         
 def main():        
-    fs = 250e6
+    fs = 125e6
     n = 1024
-    linewidth = 100e3; 
-    D_phi = 2*np.pi*linewidth
-    
-    # Interferometer delay (s)
-    delay = 0.1e-6  
-    
+    linewidth = 100e3; # Laser linewidth (Hz)
+    D_phi = 2*np.pi*linewidth    
+   
     las = Laser(fs, n, D_phi)        
     
     app = QtGui.QApplication.instance()
@@ -166,40 +168,11 @@ def main():
         app = QtGui.QApplication([])
     app.quitOnLastWindowClosed()    
     
-    khw = KoheronWindow(app, las)    
+    win = Window(app, las)    
     
     while True:         
-        khw.update()
+        win.update()
         QtGui.QApplication.processEvents()
-    
-    
-    
-    # Plot settings
-    fig = plt.figure(figsize=(16,12))
-    ax1 = fig.add_subplot(311)
-    ax2 = fig.add_subplot(312)
-    ax3 = fig.add_subplot(313)
-    line1, = ax1.plot(np.fft.fftshift(las.fft_freq),np.linspace(-50,50,las.n))
-    line11, = ax1.plot(np.fft.fftshift(las.fft_freq),np.linspace(-50,50,las.n))
-    line2, = ax2.plot(las.t,np.linspace(0,1,las.n))
-    line3, = ax3.plot(las.t,np.linspace(-10.1,10.1,las.n))
-    line31, = ax3.plot(las.t,np.linspace(-10.1,10.1,las.n))
-    
-    psd_avg = np.zeros(las.n)
-    
-    for i in range(1):
-        las.update_phase(16)
-        signal = las.interference_signal(delay)
-        psd = np.abs(np.square(np.fft.fft(signal[-las.n-1:-1])));
-        psd_avg = (i * psd_avg + psd)/(i+1) 
-        line1.set_ydata(np.fft.fftshift(10*np.log10(psd)))
-        line11.set_ydata(np.fft.fftshift(10*np.log10(psd_avg)))
-        line2.set_ydata(signal[-las.n-1:-1])   
-        line3.set_ydata(las.phase[-las.n-1:-1])
-        tmp = np.roll(las.phase, np.int(delay / las.dt))
-        line31.set_ydata(tmp[-las.n-1:-1])
-        fig.canvas.draw()
-        time.sleep(0.01)
 
 if __name__ == '__main__':
     import sys    
