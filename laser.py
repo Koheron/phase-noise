@@ -1,183 +1,124 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 
 import numpy as np
-from pyqtgraph.Qt import QtGui, QtCore
 import pyqtgraph as pg
+from pyqtgraph.Qt import QtCore, QtWidgets
 
-# https://www.institutoptique.fr/content/download/3234/22015/file/Optique%20Statistique%20cours%20ecrit.pdf
 
 class Laser:
-        
-    def __init__(self, fs, n, D_phi):    
-        # Sampling frequency (Hz)
-        self.fs = fs
-        # Number of points in time    
+    def __init__(self, fs, n, D_phi):
+        self.fs = float(fs)
+        self.dt = 1 / self.fs
         self.n = n
+        self.D_phi = D_phi  # Phase diffusion coefficient (rad^2/s).
 
-        self.D_phi = D_phi   
-        
-        self.n_ = 2 * self.n
-        
-        # Time grid (s)
-        self.t  = np.arange(self.n)/fs
-        self.t_ = np.arange(self.n_)/fs
-        # Time steps (s)
-        self.dt = 1/fs
-        # Frequency grid (Hz)
-        self.f_fft = np.fft.fftfreq(self.n)/self.dt        
-        self.f_fft_ = np.fft.fftfreq(self.n_)/self.dt
-        
-        self.phase = np.zeros(self.n_) + 2* np.pi * np.random.rand()
-        self.update_phase(self.n)
-        
-        self.interferometer_phase = np.pi/4
+        # Keep twice the FFT length so the plotted samples have a delay history.
+        self.n_ = 2 * n
+        self.t_ = np.arange(self.n_) * self.dt
+        self.f_fft_ = np.fft.fftfreq(self.n_, self.dt)
+        self.f_fft = np.fft.fftfreq(n, self.dt)
+        self.phase = np.full(self.n_, 2 * np.pi * np.random.rand())
+        self.update_phase(self.n_)
+        self.interferometer_phase = np.pi / 4
 
     def update_phase(self, n_update):
-        phase_steps = np.sqrt(2*self.D_phi*self.dt) * np.random.randn(n_update)
+        # dphi = sqrt(2 D_phi dt) N(0, 1); optical FWHM = D_phi / pi.
+        steps = np.sqrt(2 * self.D_phi * self.dt) * np.random.randn(n_update)
+        last_phase = self.phase[-1]
         self.phase = np.roll(self.phase, -n_update)
-        self.phase[-n_update-1:-1] = np.cumsum(phase_steps) + self.phase[-n_update-2]
-     
-    def interference_signal(self, delay):
-        signal = 0.5*(1 + np.real(np.exp(1j * self.interferometer_phase) * \
-                 np.exp(1j * (self.phase - self.shift_phase(delay, correct_slope=True)))))
-        return signal
-        
+        self.phase[-n_update:] = last_phase + np.cumsum(steps)
+
     def shift_phase(self, delay, correct_slope=False):
+        # FFT shifts assume a periodic record. Remove its drift before shifting.
         phase = self.phase
-        wedge = np.exp(2*1j*np.pi*delay*self.f_fft_)
         if correct_slope:
-            data_inter = phase[-1] + (phase[1]-phase[0]+phase[-1]-phase[-2])/2
-            slope = (data_inter - phase[0]) / (self.n_ * self.dt)
+            endpoint = phase[-1] + (phase[1] - phase[0] + phase[-1] - phase[-2]) / 2
+            slope = (endpoint - phase[0]) / (self.n_ * self.dt)
             phase = phase - slope * self.t_
-        fft_phase = np.fft.fft(phase)
-        phase_shifted = np.real(np.fft.ifft(fft_phase * wedge))
+        # exp(-i 2 pi f tau) gives phi(t - tau).
+        spectrum = np.fft.fft(phase) * np.exp(-2j * np.pi * self.f_fft_ * delay)
+        shifted = np.fft.ifft(spectrum).real
         if correct_slope:
-            phase_shifted += slope * self.t_
-        return phase_shifted
-        
+            shifted += slope * (self.t_ - delay)
+        return shifted
 
-class Window(QtGui.QMainWindow):
-    def __init__(self, app, laser):
-        super(Window, self).__init__()
-        self.app = app        
+    def interference_signal(self, delay):
+        # Equal-power arms: I(t) = [1 + cos(bias + phi(t) - phi(t - tau))] / 2.
+        phase_difference = self.phase - self.shift_phase(delay, correct_slope=True)
+        return 0.5 * (1 + np.cos(self.interferometer_phase + phase_difference))
+
+
+class Window(QtWidgets.QWidget):
+    def __init__(self, laser):
+        super().__init__()
         self.laser = laser
-        
-        self.max_dphi = 10e6
-        self.dphi_step = 10e3
-        
-        self.delay = 0.1e-6
-        self.max_delay = 0.1e-6
-        self.delay_step = 0.1e-9
-                
-        self.setWindowTitle("Koheron Simulation of laser phase noise") # Title
-        self.setWindowIcon(QtGui.QIcon('icon_koheron.png'))
-        self.resize(800, 600) # Size
+        self.setWindowTitle("Koheron Simulation of laser phase noise")
+        self.resize(800, 600)
 
-        # Layout
-        self.centralWid = QtGui.QWidget()
-        self.setCentralWidget(self.centralWid)
-        
-        self.lay = QtGui.QVBoxLayout()
-        self.button_sublayout = QtGui.QHBoxLayout()   
-        self.hlay1 = QtGui.QHBoxLayout()   
+        self.dphi_step = np.pi * 1e3  # 1 kHz optical FWHM per slider step.
+        self.dphi_label = QtWidgets.QLabel()
+        self.dphi_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.dphi_slider.setRange(0, int(10e6 / self.dphi_step))
+        self.dphi_slider.setValue(round(laser.D_phi / self.dphi_step))
 
-        self.value_layout = QtGui.QVBoxLayout()         
-        self.slider_layout = QtGui.QVBoxLayout()                
-        
-        self.centralWid.setLayout(self.lay)
-                
-        # Widgets : Buttons, Sliders, PlotWidgets
-      
-        # D_phi
-        self.dphi_label = QtGui.QLabel()
-        self.dphi_label.setText('Linewitdth (kHz): '+"{:.2f}".format(self.laser.D_phi/(2*np.pi)))
-        self.dphi_slider = QtGui.QSlider()
-        self.dphi_slider.setMinimum(0)
-        self.dphi_slider.setMaximum(self.max_dphi/self.dphi_step)
-        self.dphi_slider.setOrientation(QtCore.Qt.Horizontal)
-        
-        # D_phi
-        self.delay_label = QtGui.QLabel()
-        self.delay_label.setText('Delay (ns): '+"{:.2f}".format(self.delay))
-        self.delay_slider = QtGui.QSlider()
-        self.delay_slider.setMinimum(0)
-        self.delay_slider.setMaximum(self.max_delay/self.delay_step)
-        self.delay_slider.setOrientation(QtCore.Qt.Horizontal)        
-        
-        
-        # Plot Widget   
-        self.plotWid = pg.PlotWidget(name="data")
-        self.dataItem = pg.PlotDataItem(1e-6 * np.fft.fftshift(self.laser.f_fft),0*self.laser.t, pen=(0,4))
-        self.plotWid.addItem(self.dataItem)
-        self.plotItem = self.plotWid.getPlotItem()
-        self.plotItem.setMouseEnabled(x=False, y = True)
-        #specItem.setYRange(-8192, 8192)
-        # Axis
-        self.plotAxis = self.plotItem.getAxis("bottom")
-        self.plotAxis.setLabel("Frequency (MHz)")
-        
-        # Add Widgets to layout
-        
-        self.value_layout.addWidget(self.dphi_label,0)        
-        self.slider_layout.addWidget(self.dphi_slider,0)
-        
-        self.value_layout.addWidget(self.delay_label,0)        
-        self.slider_layout.addWidget(self.delay_slider,0)        
-        
-        
-        self.hlay1.addLayout(self.value_layout)     
-        self.hlay1.addLayout(self.slider_layout) 
-        
-        self.lay.addLayout(self.hlay1)
-        self.lay.addWidget(self.plotWid)
-        
+        self.delay_step = 0.1e-9  # 0.1 ns per slider step, up to 100 ns.
+        self.delay_label = QtWidgets.QLabel()
+        self.delay_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.delay_slider.setRange(0, round(100e-9 / self.delay_step))
+        self.delay_slider.setValue(self.delay_slider.maximum())
+
+        self.plot = pg.PlotWidget()
+        self.plot.setLabel("bottom", "Frequency (MHz)")
+        self.plot.setLabel("left", "Intensity PSD (dB/Hz)")
+        self.plot.setMouseEnabled(x=False, y=True)
+        self.curve = self.plot.plot(pen=(0, 4))
+
+        controls = QtWidgets.QFormLayout()
+        controls.addRow(self.dphi_label, self.dphi_slider)
+        controls.addRow(self.delay_label, self.delay_slider)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(controls)
+        layout.addWidget(self.plot)
+
         self.dphi_slider.valueChanged.connect(self.change_dphi)
         self.delay_slider.valueChanged.connect(self.change_delay)
-        
-        self.show()
-        
-        # Define events
-        
-    def update(self):        
-        self.laser.update_phase(16)
-        signal = self.laser.interference_signal(self.delay)
-        psd = np.abs(np.square(np.fft.fft(signal[-self.laser.n-1:-1])));
-        self.dataItem.setData(1e-6 * np.fft.fftshift(self.laser.f_fft),np.fft.fftshift(10*np.log10(psd)))
-    
-  
+        self.change_dphi()
+        self.change_delay()
+        self.update_plot()
+        self.timer = QtCore.QTimer(self)
+        self.timer.timeout.connect(self.update_plot)
+        self.timer.start(30)
+
     def change_dphi(self):
-        self.laser.D_phi = self.dphi_slider.value()*self.dphi_step    
-        self.dphi_label.setText('Linewidth (kHz) : '+"{:.2f}".format(1e-3 * self.laser.D_phi / (2*np.pi)))
-        
+        self.laser.D_phi = self.dphi_slider.value() * self.dphi_step
+        self.dphi_label.setText(f"Linewidth FWHM (kHz): {self.laser.D_phi / (np.pi * 1e3):.2f}")
+
     def change_delay(self):
-        self.delay = self.delay_slider.value()*self.delay_step 
-        self.delay_label.setText('Delay (ns) : '+"{:.2f}".format(1e9 * self.delay))    
-        
-        
-def main():        
-    fs = 125e6
-    n = 1024
-    linewidth = 100e3; # Laser linewidth (Hz)
-    D_phi = 2*np.pi*linewidth    
-   
-    las = Laser(fs, n, D_phi)        
-    
-    app = QtGui.QApplication.instance()
-    if app == None:
-        app = QtGui.QApplication([])
-    app.quitOnLastWindowClosed()    
-    
-    win = Window(app, las)    
-    
-    while True:         
-        win.update()
-        QtGui.QApplication.processEvents()
+        self.delay = self.delay_slider.value() * self.delay_step
+        self.delay_label.setText(f"Delay (ns): {1e9 * self.delay:.2f}")
+
+    def update_plot(self):
+        self.laser.update_phase(16)
+        signal = self.laser.interference_signal(self.delay)[-self.laser.n:]
+        window = np.hanning(self.laser.n)
+        spectrum = np.fft.fft((signal - signal.mean()) * window)
+        # Two-sided PSD: its integral over frequency is the windowed mean square.
+        psd = np.abs(spectrum)**2 / (self.laser.fs * np.sum(window**2))
+        psd_db = 10 * np.log10(np.maximum(psd, np.finfo(float).tiny))
+        self.curve.setData(1e-6 * np.fft.fftshift(self.laser.f_fft), np.fft.fftshift(psd_db))
+
+
+def main():
+    fs = 125e6  # Sampling frequency (Hz).
+    n = 1024  # Samples per spectrum.
+    linewidth = 100e3  # Optical FWHM (Hz).
+    app = pg.mkQApp()
+    app.setQuitOnLastWindowClosed(True)
+    window = Window(Laser(fs, n, D_phi=np.pi * linewidth))
+    window.show()
+    return app.exec()
+
 
 if __name__ == '__main__':
-    import sys    
-    main()
-    if (sys.flags.interactive != 1) or not hasattr(QtCore, 'PYQT_VERSION'):
-        QtGui.QApplication.instance().exec_()     
-
-         
+    import sys
+    sys.exit(main())
